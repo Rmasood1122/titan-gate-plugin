@@ -1,0 +1,87 @@
+"""Plugin-structure self-validation — mirrors directory lints that bit us on
+plugin #1: manifest schema, kebab name, frontmatter, NO broad allowed-tools
+pre-approvals, icon present, no CLAUDE.md, no personal/client strings,
+hook must be non-breaking (--auto + || true)."""
+import json
+import re
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_manifest_schema():
+    m = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
+    assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", m["name"])
+    for key in ("version", "description", "license", "repository", "homepage",
+                "supportUrl", "documentationUrl", "privacyPolicyUrl", "icon"):
+        assert m.get(key), key
+    assert m["author"]["name"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", m["version"])
+
+
+def test_marketplace_has_description():
+    mp = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
+    assert mp.get("description")  # plugin-1 lesson: warning without it
+    assert mp["plugins"][0]["source"] == "./"
+
+
+def frontmatter(path: Path) -> dict:
+    text = path.read_text()
+    assert text.startswith("---\n"), path
+    return yaml.safe_load(text.split("---\n", 2)[1])
+
+
+def test_commands_frontmatter_and_no_broad_grants():
+    cmds = sorted((ROOT / "commands").glob("*.md"))
+    assert {c.stem for c in cmds} == {"receipt-init", "receipt", "verify-chain"}
+    for c in cmds:
+        data = frontmatter(c)
+        assert data.get("description"), c
+        # plugin-1 policy hold: never pre-approve broad tool access
+        assert "allowed-tools" not in data, c
+
+
+def test_skill_frontmatter():
+    data = frontmatter(ROOT / "skills/receipt-integrity/SKILL.md")
+    assert data.get("description")
+
+
+def test_hook_is_nonbreaking():
+    h = json.loads((ROOT / "hooks/hooks.json").read_text())
+    cmd = h["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+    assert "--auto" in cmd and "|| true" in cmd  # can never fail a commit
+    assert "${CLAUDE_PLUGIN_ROOT}" in cmd
+
+
+def test_icon_is_128():
+    s = (ROOT / ".claude-plugin/icon.svg").read_text()
+    assert 'width="128"' in s and 'height="128"' in s
+
+
+def test_core_is_stdlib_only():
+    banned = re.compile(r"^\s*(import|from)\s+(requests|yaml|numpy|cryptography|pydantic)\b", re.M)
+    for p in (ROOT / "core").glob("*.py"):
+        assert not banned.search(p.read_text()), p
+
+
+def test_no_claude_md_at_root():
+    assert not (ROOT / "CLAUDE.md").exists()
+
+
+def test_no_personal_or_client_strings():
+    banned = re.compile(r"appealforge|jzanus|lloyd|tempur|momina|rehanrana11", re.I)
+    for p in ROOT.rglob("*"):
+        if p.is_file() and p.suffix in {".py", ".md", ".yaml", ".yml", ".json", ".svg"} \
+                and ".git" not in p.parts and p.name != "test_structure.py":
+            assert not banned.search(p.read_text(errors="ignore")), p
+
+
+def test_readme_claims_match_behavior():
+    readme = (ROOT / "README.md").read_text()
+    # the honest-limits sentence must exist and stay
+    assert "Does not prove" in readme
+    assert "shared secret" in readme
+    # stdlib claim is enforced by test_core_is_stdlib_only above
+    assert "stdlib only" in readme.lower() or "Stdlib only" in readme

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#241a3c"/>
+  <!-- receipt -->
+  <path d="M40 26 h48 v70 l-8 -6 -8 6 -8 -6 -8 6 -8 -6 -8 6 z" fill="#ece8f4"/>
+  <rect x="48" y="38" width="32" height="6" rx="3" fill="#8a7fb3"/>
+  <rect x="48" y="50" width="32" height="6" rx="3" fill="#8a7fb3"/>
+  <!-- chain links -->
+  <circle cx="52" cy="72" r="7" fill="none" stroke="#5b4a8a" stroke-width="5"/>
+  <circle cx="70" cy="72" r="7" fill="none" stroke="#5b4a8a" stroke-width="5"/>
+</svg>
