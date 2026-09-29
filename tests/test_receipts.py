@@ -148,6 +148,93 @@ def test_create_without_key_fails_loud_when_not_auto(repo):
     assert r.returncode == 2 and "init first" in r.stderr
 
 
+def test_unicode_and_special_filenames_are_hashed(repo):
+    """git C-quotes non-ASCII paths in line mode; the -z parser must record
+    the raw path WITH its content hash — silently dropping a hash is the
+    exact failure an attestation tool exists to prevent."""
+    run(["init"], repo)
+    for name in ("café résumé.py", "with space.txt", 'q"uote.md'):
+        (repo / name).write_text("x\n")
+    sh("git add -A && git commit -qm unicode", repo)
+    assert run(["create"], repo).returncode == 0
+    r = json.loads(receipts(repo)[-1].read_text())
+    by_path = {f["path"]: f for f in r["files"]}
+    for name in ("café résumé.py", "with space.txt", 'q"uote.md'):
+        assert name in by_path, (name, list(by_path))
+        assert "sha256" in by_path[name], name
+    assert not any(p.startswith('"') for p in by_path)  # no C-quoted paths
+    assert run(["verify"], repo).returncode == 0
+
+
+def test_merge_commit_attests_first_parent_diff(repo):
+    """'git show' on a merge prints the combined diff (usually empty) — a
+    receipt with files=[] attests nothing. Merges diff vs first parent."""
+    run(["init"], repo)
+    run(["create"], repo)
+    sh("git checkout -qb feat", repo)
+    (repo / "feat.txt").write_text("f\n")
+    sh("git add -A && git commit -qm feat", repo)
+    run(["create"], repo)
+    sh("git checkout -q main", repo)
+    (repo / "main.txt").write_text("m\n")
+    sh("git add -A && git commit -qm main2", repo)
+    run(["create"], repo)
+    sh("git merge -q --no-ff -m merged feat", repo)
+    assert run(["create"], repo).returncode == 0
+    rs = [json.loads(p.read_text()) for p in receipts(repo)]
+    merge = [r for r in rs if r["commit"]["subject"] == "merged"][0]
+    assert merge["commit"]["parents"] == 2
+    paths = {f["path"] for f in merge["files"]}
+    assert "feat.txt" in paths  # what the merge brought in vs first parent
+    assert run(["verify"], repo).returncode == 0
+
+
+def test_corrupt_key_fails_clean_never_signs(repo):
+    run(["init"], repo)
+    (repo / ".titan/key").write_text("NOT HEX AT ALL\n")
+    r = run(["create"], repo)
+    assert r.returncode == 1
+    assert "Traceback" not in r.stderr and "not valid hex" in r.stderr
+    assert not receipts(repo)  # nothing signed with a corrupt key
+    # --auto: still nonzero (|| true protects the commit) and no traceback
+    ra = run(["create", "--auto"], repo)
+    assert ra.returncode == 1 and "Traceback" not in ra.stderr
+
+
+def test_empty_key_refused(repo):
+    """bytes.fromhex('') == b'' — an empty key would HMAC 'successfully'
+    and sign receipts that prove nothing. Must refuse."""
+    run(["init"], repo)
+    (repo / ".titan/key").write_text("\n")
+    r = run(["create"], repo)
+    assert r.returncode == 1 and "too short" in r.stderr
+    assert not receipts(repo)
+
+
+def hook_run(payload, cwd):
+    import subprocess as sp
+    return sp.run([sys.executable, str(RECEIPT), "hook"], cwd=cwd,
+                  input=payload, capture_output=True, text=True)
+
+
+def test_hook_fires_only_on_git_commit(repo):
+    run(["init"], repo)
+    # non-commit bash -> no receipt
+    r = hook_run(json.dumps({"tool_name": "Bash",
+                             "tool_input": {"command": "ls -la"}}), repo)
+    assert r.returncode == 0 and not receipts(repo)
+    # git commit bash -> receipt created
+    r = hook_run(json.dumps({"tool_name": "Bash",
+                             "tool_input": {"command": "git commit -m 'x'"}}), repo)
+    assert r.returncode == 0, r.stderr
+    assert len(receipts(repo)) == 1
+    # garbage stdin -> exit 0, nothing breaks
+    assert hook_run("not json {", repo).returncode == 0
+    assert hook_run("", repo).returncode == 0
+    # uninitialized repo (no key): commit-shaped input is still a no-op
+    assert len(receipts(repo)) == 1
+
+
 def test_verify_without_receipts_fails_loud(repo):
     run(["init"], repo)
     assert run(["verify"], repo).returncode == 2

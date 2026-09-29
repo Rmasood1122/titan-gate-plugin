@@ -24,6 +24,11 @@ Subcommands:
                       the key would be tracked by git
   create [--auto]     receipt for HEAD; --auto exits 0 silently when the
                       repo has no key (hook mode: never break a commit)
+  hook                PostToolUse entry point: reads the Claude Code hook
+                      JSON from stdin (hook matchers match TOOL NAMES only,
+                      so hooks.json matches "Bash" and THIS filters), no-ops
+                      unless the command was a git commit, then = create
+                      --auto. Exits 0 on any unparseable input.
   verify              walk .titan/attestations/: chain structure + every
                       signature; exit 0 only if ALL verify
 
@@ -81,6 +86,62 @@ def sha256_file(p: Path) -> str:
         for blk in iter(lambda: f.read(65536), b""):
             h.update(blk)
     return h.hexdigest()
+
+
+def load_key() -> bytes | None:
+    """Read and validate .titan/key. A corrupt or too-short key must never
+    sign anything — an empty key would HMAC 'successfully' and produce
+    receipts that prove nothing. Returns None after printing FAIL."""
+    try:
+        key = bytes.fromhex(KEY_PATH.read_text().strip())
+    except (ValueError, OSError):
+        print(f"FAIL: {KEY_PATH} is not valid hex — corrupt key; restore it "
+              f"or rotate (init --force) and disclose the break", file=sys.stderr)
+        return None
+    if len(key) < 16:
+        print(f"FAIL: {KEY_PATH} is too short ({len(key)} bytes) — refusing "
+              f"to sign with a weak/empty key", file=sys.stderr)
+        return None
+    return key
+
+
+def changed_files(sha: str) -> tuple[list[dict], str, int]:
+    """(files, patch, n_parents) for a commit.
+
+    - NUL-separated name-status (-z): git C-quotes non-ASCII/special paths
+      in line mode, which turned 'café.py' into '"caf\\303\\251.py"' — a path
+      that matches no file, so its content hash was silently DROPPED. An
+      attestation tool must never silently skip content.
+    - Merge commits diff against the FIRST parent: 'git show' prints the
+      combined diff for merges, which is usually empty — a receipt with
+      files=[] attests nothing without saying so.
+    """
+    parents = git("rev-list", "--parents", "-n", "1", sha).split()[1:]
+    if len(parents) >= 2:
+        raw = git("diff", "--name-status", "-z", f"{sha}^1", sha)
+        patch = git("diff", f"{sha}^1", sha)
+    else:
+        raw = git("show", "--name-status", "-z", "--format=", sha)
+        patch = git("show", "--format=", sha)
+    files: list[dict] = []
+    toks = raw.split("\0")
+    i = 0
+    while i < len(toks):
+        status = toks[i].strip()
+        if not status:
+            i += 1
+            continue
+        n_paths = 2 if status[:1] in ("R", "C") else 1  # rename/copy: old, new
+        paths = [t for t in toks[i + 1:i + 1 + n_paths]]
+        i += 1 + n_paths
+        if not paths or not paths[-1]:
+            continue
+        entry: dict = {"path": paths[-1], "status": status[:1]}
+        fp = Path(paths[-1])
+        if fp.is_file():
+            entry["sha256"] = sha256_file(fp)
+        files.append(entry)
+    return files, patch, len(parents)
 
 
 # ---------------------------------------------------------------- init
@@ -144,16 +205,17 @@ def cmd_create(args: argparse.Namespace) -> int:
         if args.auto:
             return 0  # hook mode: repo not initialized — silently do nothing
         return die("no .titan/key — run receipt.py init first")
-    key = bytes.fromhex(KEY_PATH.read_text().strip())
+    key = load_key()
+    if key is None:
+        return 1  # a corrupt key is a loud failure even in --auto (|| true
+                  # protects the commit; silence would hide a broken setup)
 
     try:
         sha = git("rev-parse", "HEAD").strip()
         branch = git("rev-parse", "--abbrev-ref", "HEAD").strip()
         msg = git("log", "-1", "--format=%B", "HEAD")
         subject = msg.splitlines()[0] if msg.splitlines() else ""
-        names = [ln for ln in git("show", "--name-status", "--format=", "HEAD")
-                 .splitlines() if ln.strip()]
-        patch = git("show", "--format=", "HEAD")
+        files, patch, n_parents = changed_files(sha)
     except RuntimeError as exc:
         return 0 if args.auto else die(str(exc))
 
@@ -168,16 +230,6 @@ def cmd_create(args: argparse.Namespace) -> int:
             except (json.JSONDecodeError, OSError):
                 return die(f"unreadable receipt in tree: {p}", 1)
 
-    files = []
-    for ln in names:
-        parts = ln.split("\t")
-        status, path = parts[0], parts[-1]
-        entry: dict = {"path": path, "status": status[:1]}
-        fp = Path(path)
-        if fp.is_file():
-            entry["sha256"] = sha256_file(fp)
-        files.append(entry)
-
     try:
         prev = latest_receipt_hash(TREE)
     except ChainStateError as exc:
@@ -191,7 +243,8 @@ def cmd_create(args: argparse.Namespace) -> int:
         "evaluated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "root_date": now.strftime("%Y-%m-%d"),
         "repo": Path(root).name,
-        "commit": {"sha": sha, "branch": branch, "subject": subject[:200]},
+        "commit": {"sha": sha, "branch": branch, "subject": subject[:200],
+                   "parents": n_parents},
         "files": files,
         "diff_sha256": hashlib.sha256(patch.encode()).hexdigest(),
         "attribution": _attribution(msg),
@@ -208,6 +261,28 @@ def cmd_create(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- hook
+GIT_COMMIT_RE = re.compile(r"\bgit\b.*\bcommit\b", re.S)
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """Claude Code PostToolUse entry point. Hook matchers match TOOL NAMES
+    only (docs: hooks reference) — a matcher like 'Bash\\(.*commit' NEVER
+    fires because the tool name is just 'Bash'. So hooks.json matches every
+    Bash call and this reads the hook JSON from stdin to act only on git
+    commits. False positives are harmless (create --auto dedupes per sha);
+    false negatives lose receipts — so the filter is deliberately loose."""
+    try:
+        payload = json.load(sys.stdin)
+        cmd = (payload.get("tool_input") or {}).get("command") or ""
+    except (json.JSONDecodeError, AttributeError, ValueError):
+        return 0  # unparseable hook input: never break anything
+    if not isinstance(cmd, str) or not GIT_COMMIT_RE.search(cmd):
+        return 0
+    args.auto = True
+    return cmd_create(args)
+
+
 # ---------------------------------------------------------------- verify
 def cmd_verify(args: argparse.Namespace) -> int:
     root = repo_root()
@@ -217,7 +292,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return die("no attestations at .titan/attestations/ — nothing to verify")
     if not KEY_PATH.exists():
         return die("no .titan/key — signatures cannot be checked without it")
-    key = bytes.fromhex(KEY_PATH.read_text().strip())
+    key = load_key()
+    if key is None:
+        return 2
 
     try:
         head = latest_receipt_hash(TREE)  # full structural walk, fail-closed
@@ -250,6 +327,7 @@ def main() -> int:
     p.set_defaults(fn=cmd_init)
     p = sub.add_parser("create"); p.add_argument("--auto", action="store_true")
     p.set_defaults(fn=cmd_create)
+    p = sub.add_parser("hook"); p.set_defaults(fn=cmd_hook, auto=True)
     p = sub.add_parser("verify"); p.set_defaults(fn=cmd_verify)
     args = ap.parse_args()
     return args.fn(args)

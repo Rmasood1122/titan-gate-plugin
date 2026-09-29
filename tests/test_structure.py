@@ -48,10 +48,14 @@ def test_skill_frontmatter():
     assert data.get("description")
 
 
-def test_hook_is_nonbreaking():
+def test_hook_is_nonbreaking_and_matcher_is_a_tool_name():
     h = json.loads((ROOT / "hooks/hooks.json").read_text())
-    cmd = h["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
-    assert "--auto" in cmd and "|| true" in cmd  # can never fail a commit
+    entry = h["hooks"]["PostToolUse"][0]
+    # hook matchers match TOOL NAMES only — "Bash\(.*commit" NEVER fires
+    # (that syntax belongs to permission rules). Shipped that bug once.
+    assert entry["matcher"] == "Bash"
+    cmd = entry["hooks"][0]["command"]
+    assert " hook" in cmd and "|| true" in cmd  # filter in-script; never fail a commit
     assert "${CLAUDE_PLUGIN_ROOT}" in cmd
 
 
