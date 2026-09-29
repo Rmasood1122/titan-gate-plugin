@@ -1,5 +1,7 @@
 # Titan Receipts
 
+[![CI](https://github.com/Rmasood1122/titan-gate-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/Rmasood1122/titan-gate-plugin/actions/workflows/ci.yml)
+
 **Tamper-evident receipts for AI-assisted commits — hash-chained, signed,
 verifiable offline.**
 

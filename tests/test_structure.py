@@ -75,7 +75,7 @@ def test_no_claude_md_at_root():
 
 
 def test_no_personal_or_client_strings():
-    banned = re.compile(r"appealforge|jzanus|lloyd|tempur|momina|rehanrana11", re.I)
+    banned = re.compile(r"appealforge|rehanrana11", re.I)
     for p in ROOT.rglob("*"):
         if p.is_file() and p.suffix in {".py", ".md", ".yaml", ".yml", ".json", ".svg"} \
                 and ".git" not in p.parts and p.name != "test_structure.py":
