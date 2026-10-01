@@ -45,7 +45,7 @@ fresh Claude Code session — plugins load at startup.
 |---|---|
 | `/receipt-init` | Generates the repo's signing key (gitignored, never committed — and init refuses to proceed if git tracks it) |
 | `/receipt` | Writes a signed, chained receipt for HEAD. One per commit; re-runs are no-ops |
-| `/verify-chain` | Walks the whole chain offline: structure + every signature. Any tamper = exit 1 naming the receipt |
+| `/verify-chain` | Walks the whole chain offline: structure + every signature. Any tamper = exit 1 naming the receipt. Ends with an `ANCHOR` line: how many receipts are committed **and pushed** |
 
 Plus a commit hook: once a repo is initialized, every `git commit` made in
 a Claude session gets a receipt automatically. Uninitialized repos are a
@@ -67,7 +67,21 @@ these lines, because a receipt system that overclaims is worse than none.
 
 The chain becomes evidence *to others* when `.titan/attestations/` is
 committed and pushed — every clone then holds an independent copy that
-tampering would have to chase down.
+tampering would have to chase down. Because that distribution is the only
+defence against someone who holds the key, `/verify-chain` measures it: its
+closing `ANCHOR` line reports how many receipts are untracked, uncommitted,
+or committed-but-not-pushed. A chain that verifies but sits only on one
+machine is a claim, not evidence.
+
+### Verifying a clone that has no key
+
+The key is gitignored and never travels with the repo, so a reviewer's fresh
+clone has the receipts but not `.titan/key`. `/verify-chain` still runs the
+full structural walk there — one unbroken chain from GENESIS, every stored
+`receipt_hash` recomputed from content — and reports that result, then says
+plainly `SIGNATURES NOT CHECKED` and exits 2. Structure proves the files are
+internally consistent; only the key proves they were signed under it. Share
+the key out-of-band with whoever needs to verify signatures.
 
 ## First run
 
