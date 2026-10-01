@@ -15,6 +15,30 @@ commit trailers — chained to the previous receipt and HMAC-signed. The
 chain is fail-closed: forks, missing links, and edited receipts are hard
 verification failures, never warnings.
 
+## Install
+
+Requires [Claude Code](https://claude.com/claude-code), Python 3.10+, and git.
+Nothing else — stdlib only, no packages, no network, no service, nothing
+phones home.
+
+In Claude Code:
+
+```
+/plugin marketplace add Rmasood1122/titan-gate-plugin
+/plugin install titan-receipts@titan-receipts-marketplace
+```
+
+Or from your shell, no session needed (same result):
+
+```bash
+claude plugin marketplace add Rmasood1122/titan-gate-plugin
+claude plugin install titan-receipts@titan-receipts-marketplace
+```
+
+**Confirm it took:** `/plugin list` shows `titan-receipts`, and `/receipt-init`
+is recognized as a command. If a slash command isn't recognized, start a
+fresh Claude Code session — plugins load at startup.
+
 ## Commands
 
 | Command | What it does |
@@ -45,16 +69,18 @@ The chain becomes evidence *to others* when `.titan/attestations/` is
 committed and pushed — every clone then holds an independent copy that
 tampering would have to chase down.
 
-## Quickstart
+## First run
+
+Open Claude Code **inside the repository you want receipts for**, then:
 
 ```
-/receipt-init
-git commit -m "feat: something Claude helped write"   # hook receipts it
-/verify-chain
+/receipt-init                                         # one-time: creates the signing key (gitignored)
+git commit -m "feat: something Claude helped write"   # the hook receipts it automatically
+/verify-chain                                         # walks the chain — exit 0 means intact
 ```
 
-Requirements: Python 3.10+, git. Stdlib only — no packages, no network,
-no service, nothing phones home.
+That's the whole loop. Receipts land in `.titan/attestations/`; commit and
+push that directory to make the chain evidence to others, not just to you.
 
 ## Provenance
 
