@@ -24,13 +24,16 @@ runs:
         set -euo pipefail
         TOOL="${GITHUB_ACTION_PATH}/core/receipt.py"
         if [ -f ".titan/tools/receipt.py" ]; then TOOL=".titan/tools/receipt.py"; fi
+        rc=0
         if [ -n "$TITAN_KEY" ]; then
           mkdir -p .titan && printf '%s\n' "$TITAN_KEY" > .titan/key && chmod 600 .titan/key
-          python3 "$TOOL" verify
+          python3 "$TOOL" verify || rc=$?
         else
-          python3 "$TOOL" verify --structure-only
+          python3 "$TOOL" verify --structure-only || rc=$?
         fi
+        # The report is wanted MOST when verification fails — it records BROKEN.
         if [ -n "$TITAN_REPORT" ]; then
-          python3 "$TOOL" report --out "$TITAN_REPORT"
+          python3 "$TOOL" report --out "$TITAN_REPORT" || true
         fi
         if [ -n "$TITAN_KEY" ]; then rm -f .titan/key; fi
+        exit $rc

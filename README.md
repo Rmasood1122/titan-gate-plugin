@@ -133,7 +133,7 @@ The canonicalization and chain-walk rules are vendored byte-compatible from
 TRS receipt engine adds Ed25519 signing, RFC-3161 timestamping, Merkle
 roots, and a scoring judge. This plugin is the lightweight attestation
 profile of that system: `change-attestation/v1`, its own verifier, its own
-tree. Suite: 44 tests, every tamper path seen failing. Related:
+tree. Suite: 53 tests, every tamper path seen failing. Related:
 [eval-conductor](https://github.com/Rmasood1122/eval-conductor) — fail-closed
 eval release gates by the same author.
 

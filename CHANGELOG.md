@@ -28,7 +28,15 @@ actually ask about.
   with optional `key` secret and `report` path.
 - README rewritten around the problem with a real receipt; limits in a
   collapsed section, expanded (coverage, recorded-claims). Skill updated to match.
-- Suite: 44 tests (was 25).
+- **Hook over-claim guard**: the PostToolUse hook now receipts only when the
+  command was a real `git commit` (not `git log | grep commit`), the tool
+  reported success, and HEAD is fresh — a failed commit in a Claude session
+  can no longer receipt the human's existing HEAD as AI-assisted.
+- `install-hook` refuses (exit 1, with instructions) when an existing
+  post-commit hook is not a shell script, ends in `exit`/`exec`, or is
+  husky-managed — never claims coverage it cannot deliver. `init` on an
+  already-initialised repo now still vendors tools and installs the hook.
+- Suite: 53 tests (was 25).
 
 ## 1.0.0
 

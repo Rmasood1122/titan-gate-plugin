@@ -177,6 +177,10 @@ def cmd_init(args: argparse.Namespace) -> int:
     if KEY_PATH.exists() and not args.force:
         print(f"key exists: {KEY_PATH} (use --force to rotate — old receipts "
               f"then verify only with the OLD key; keep it somewhere safe)")
+        if not getattr(args, "no_git_hook", False):
+            for w in vendor_tools(Path(root)):
+                print(f"vendored: {w}")
+            print(install_git_hook(Path(root)))
         return 0
     KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
     KEY_PATH.write_text(secrets.token_hex(32) + "\n")
@@ -252,6 +256,22 @@ def install_git_hook(root: Path) -> str:
         existing = hook.read_text()
         if HOOK_MARK in existing:
             return "git hook: already installed"
+        first = existing.splitlines()[0] if existing.splitlines() else ""
+        if first.startswith("#!") and not re.search(r"/(sh|bash|dash|zsh)\b", first):
+            return (f"git hook: NOT installed — {hook} is not a shell script ({first}); "
+                    f"appending sh would break it. Call "
+                    f"`python3 .titan/tools/receipt.py create --auto --recorder git-post-commit` "
+                    f"from that hook yourself.")
+        tail = [ln.strip() for ln in existing.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        if tail and re.match(r"(exit|exec)\b", tail[-1]):
+            return (f"git hook: NOT installed — {hook} ends with `{tail[-1]}`, so anything "
+                    f"appended after it would never run (common with husky / pre-commit "
+                    f"managers). Add this line before it: "
+                    f"`python3 \"$(git rev-parse --show-toplevel)/.titan/tools/receipt.py\" "
+                    f"create --auto --recorder git-post-commit || true`")
+        if "husky" in str(hooks_dir) or "/.husky/" in existing:
+            return (f"git hook: NOT installed — {hooks_dir} is husky-managed and regenerated "
+                    f"on install; add the receipt line to your husky post-commit hook instead.")
         # append, never clobber someone else's hook
         body = existing.rstrip("\n") + "\n\n" + "\n".join(
             ln for ln in POST_COMMIT.splitlines() if not ln.startswith("#!")) + "\n"
@@ -274,7 +294,10 @@ def cmd_install_hook(args: argparse.Namespace) -> int:
     os.chdir(root)
     for w in vendor_tools(root):
         print(f"vendored: {w}")
-    print(install_git_hook(root))
+    msg = install_git_hook(root)
+    print(msg)
+    if "NOT installed" in msg:
+        return 1
     print("Every commit now gets a receipt (ai_assisted true/false). Commit "
           ".titan/tools/ so clones can run `receipt.py install-hook` too — "
           "git hooks themselves are not cloned.")
@@ -462,7 +485,10 @@ def cmd_create(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------- hook
-GIT_COMMIT_RE = re.compile(r"\bgit\b.*\bcommit\b", re.S)
+# A `git commit` invocation inside ONE shell segment (split on ; && || |):
+# `git log | grep commit` and `git status; echo commit` must not match.
+GIT_COMMIT_RE = re.compile(
+    r"(?:^|[;&|]\s*)(?:\w+=\S*\s+)*git(?:\s+-[-\w=./:]+(?:\s+[^\s-][\w=./:@]*)?)*\s+commit\b")
 
 
 def cmd_hook(args: argparse.Namespace) -> int:
@@ -479,10 +505,41 @@ def cmd_hook(args: argparse.Namespace) -> int:
         return 0  # unparseable hook input: never break anything
     if not isinstance(cmd, str) or not GIT_COMMIT_RE.search(cmd):
         return 0
+    # A receipt written here CLAIMS the commit was made in this session
+    # (basis: claude-code-hook). So the commit must actually have happened:
+    # the command must have succeeded, and HEAD must be newer than the hook
+    # invocation window — a failed `git commit` ("nothing to commit", hook
+    # rejected) must not receipt the human's existing HEAD as AI-assisted.
+    if not _commit_succeeded(payload):
+        return 0
     args.auto = True
     args.recorder = "claude-code-hook"
     args.hook_payload = payload if isinstance(payload, dict) else None
     return cmd_create(args)
+
+
+def _commit_succeeded(payload: dict) -> bool:
+    resp = payload.get("tool_response")
+    text = ""
+    if isinstance(resp, dict):
+        for k in ("exit_code", "exitCode", "returncode", "code"):
+            if k in resp and resp[k] not in (None, 0, "0"):
+                return False
+        if resp.get("interrupted") is True:
+            return False
+        text = " ".join(str(resp.get(k, "")) for k in ("stdout", "stderr", "output", "content"))
+    elif isinstance(resp, str):
+        text = resp
+    if re.search(r"nothing to commit|no changes added to commit|Aborting commit|"
+                 r"nothing added to commit|did not match any|fatal:|error:", text):
+        return False
+    # HEAD must be recent: committed within the last 10 minutes.
+    try:
+        ts = int(git("log", "-1", "--format=%ct", "HEAD").strip())
+    except (RuntimeError, ValueError):
+        return False
+    import time
+    return (time.time() - ts) < 600
 
 
 # ---------------------------------------------------------------- verify
@@ -568,17 +625,21 @@ def cmd_report(args: argparse.Namespace) -> int:
     if sig_checked:
         key = load_key()
         for r in rs:
-            want = hmac.new(key, r["receipt_hash"].encode(), hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(want, r.get("signature", "")):
+            want = hmac.new(key, str(r.get("receipt_hash", "")).encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(want, str(r.get("signature", ""))):
                 bad_sig += 1
 
     def prov(r: dict) -> dict:
         return r.get("provenance") or {}
 
     total = len(rs)
-    ai = [r for r in rs if prov(r).get("ai_assisted") or
-          (not prov(r) and (r.get("attribution") or {}).get("co_authored_by"))]
-    unknown = [r for r in rs if not prov(r)]      # v1.0 receipts: no provenance block
+
+    def legacy_ai(r: dict) -> bool:   # v1.0 receipt: only the trailers can tell
+        co = (r.get("attribution") or {}).get("co_authored_by") or []
+        return any(AI_TRAILER_RE.search(c) for c in co) or bool((r.get("attribution") or {}).get("session"))
+
+    ai = [r for r in rs if prov(r).get("ai_assisted") or (not prov(r) and legacy_ai(r))]
+    unknown = [r for r in rs if not prov(r) and not legacy_ai(r)]   # v1.0, no AI trailer: can't say
     by_recorder: dict[str, int] = {}
     by_author: dict[str, list[int]] = {}
     by_month: dict[str, list[int]] = {}

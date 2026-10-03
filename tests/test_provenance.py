@@ -263,3 +263,114 @@ def test_recorder_version_matches_plugin_manifest():
     m = json.loads((PLUGIN / ".claude-plugin/plugin.json").read_text())
     src = (PLUGIN / "core/receipt.py").read_text()
     assert f'PLUGIN_VERSION = "{m["version"]}"' in src
+
+
+# ------------------------------------------------ hook must not over-claim
+def _hook(repo, cmd, resp=None, age_s=0):
+    """Fire the PostToolUse hook for `cmd` with an optional tool_response,
+    after making HEAD `age_s` seconds old."""
+    if age_s:
+        ts = int(sh("git log -1 --format=%ct HEAD", repo).strip()) - age_s
+        sh(f"GIT_COMMITTER_DATE=@{ts} git commit --amend --no-edit -q --date=@{ts}", repo)
+    payload = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    if resp is not None:
+        payload["tool_response"] = resp
+    return run(["hook"], repo, env=clean_env(CLAUDECODE="1"), stdin=json.dumps(payload))
+
+
+def test_hook_ignores_commands_that_merely_mention_commit(repo):
+    run(["init", "--no-git-hook"], repo)
+    for cmd in ("git log --oneline | grep commit", "git status; echo commit",
+                "echo 'git commit' > notes.txt", "git show HEAD --stat  # last commit"):
+        assert _hook(repo, cmd).returncode == 0
+        assert receipts(repo) == [], cmd
+
+
+def test_hook_accepts_real_commit_forms(repo):
+    run(["init", "--no-git-hook"], repo)
+    (repo / "b.py").write_text("x\n")
+    sh("git add -A && git commit -qm 'x'", repo)
+    assert _hook(repo, "cd /repo && git add -A && git -c user.name=T commit -m 'x'").returncode == 0
+    assert len(receipts(repo)) == 1
+    assert receipts(repo)[0]["provenance"]["basis"] == ["claude-code-hook"]
+
+
+def test_failed_commit_does_not_receipt_existing_head_as_ai(repo):
+    """The human's HEAD has no receipt yet; Claude runs `git commit` and it
+    fails. Receipting HEAD here would be a false AI-assisted claim."""
+    run(["init", "--no-git-hook"], repo)
+    r = _hook(repo, "git commit -m 'x'",
+              resp={"stdout": "On branch main\nnothing to commit, working tree clean\n",
+                    "exit_code": 1})
+    assert r.returncode == 0 and receipts(repo) == []
+    r = _hook(repo, "git commit -m 'x'", resp={"stdout": "", "stderr": "", "exit_code": 1})
+    assert receipts(repo) == []
+
+
+def test_stale_head_is_not_receipted_by_hook(repo):
+    run(["init", "--no-git-hook"], repo)
+    assert _hook(repo, "git commit -m 'x'", age_s=3600).returncode == 0
+    assert receipts(repo) == []
+
+
+# ------------------------------------------------ hook install refusals
+def test_install_hook_refuses_when_existing_hook_exits_first(repo):
+    hook = repo / ".git/hooks/post-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\n. \"$(dirname \"$0\")/h\"\nexit $c\n")
+    r = run(["install-hook"], repo)
+    assert r.returncode == 1 and "NOT installed" in r.stdout
+    assert "titan-receipts" not in hook.read_text()
+
+
+def test_install_hook_refuses_non_shell_hook(repo):
+    hook = repo / ".git/hooks/post-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/usr/bin/env python3\nprint('hi')\n")
+    r = run(["install-hook"], repo)
+    assert r.returncode == 1 and "not a shell script" in r.stdout
+    assert hook.read_text() == "#!/usr/bin/env python3\nprint('hi')\n"
+
+
+def test_init_on_initialized_repo_still_installs_hook(repo):
+    run(["init", "--no-git-hook"], repo)              # v1.0-style: key only
+    assert not (repo / ".git/hooks/post-commit").exists()
+    r = run(["init"], repo)                           # upgrade path
+    assert r.returncode == 0 and "key exists" in r.stdout
+    assert (repo / ".git/hooks/post-commit").exists()
+    assert (repo / ".titan/tools/receipt.py").exists()
+
+
+# ------------------------------------------------ report accounting
+def test_report_v1_0_receipt_with_claude_trailer_is_ai_not_unknown(repo):
+    run(["init", "--no-git-hook"], repo)
+    (repo / "b.py").write_text("x\n")
+    sh("git add -A && git commit -qm 'x' -m 'Co-Authored-By: Claude <noreply@anthropic.com>'", repo)
+    run(["create"], repo)
+    f = next((repo / ".titan/attestations").rglob("*.json"))
+    r = json.loads(f.read_text())
+    del r["provenance"]
+    sys.path.insert(0, str(PLUGIN / "core"))
+    import hashlib, hmac
+    from canonical import canonical_bytes
+    r["receipt_hash"] = hashlib.sha256(canonical_bytes(r)).hexdigest()
+    key = bytes.fromhex((repo / ".titan/key").read_text().strip())
+    r["signature"] = hmac.new(key, r["receipt_hash"].encode(), hashlib.sha256).hexdigest()
+    f.write_text(json.dumps(r))
+    out = run(["report"], repo).stdout
+    assert "| AI-assisted (per recorded basis) | 1 | 100% |" in out
+    assert "| Not AI-assisted | 0 | 0% |" in out
+    assert "Unknown (v1.0 receipts" not in out and "| -1 |" not in out
+
+
+def test_report_survives_receipt_missing_hash(repo):
+    run(["init", "--no-git-hook"], repo)
+    (repo / "b.py").write_text("x\n")
+    sh("git add -A && git commit -qm 'x'", repo)
+    run(["create"], repo)
+    f = next((repo / ".titan/attestations").rglob("*.json"))
+    r = json.loads(f.read_text())
+    del r["receipt_hash"]
+    f.write_text(json.dumps(r))
+    r = run(["report"], repo)
+    assert r.returncode == 0 and "BROKEN" in r.stdout

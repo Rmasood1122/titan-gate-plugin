@@ -97,7 +97,7 @@ def test_action_yml_is_composite_and_uses_vendored_or_plugin_tool():
     assert a["runs"]["using"] == "composite"
     step = a["runs"]["steps"][0]["run"]
     assert "verify --structure-only" in step and 'python3 "$TOOL" verify' in step
-    assert "rm -f .titan/key" in step          # the secret never outlives the step
+    assert "rm -f .titan/key" in step and "exit $rc" in step   # key never outlives the step; report written even on failure
     assert "key" in a["inputs"] and a["inputs"]["key"]["required"] is False
 
 
