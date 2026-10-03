@@ -1,5 +1,5 @@
 ---
-description: Write a signed, chained receipt for the current commit — file hashes, diff hash, and Claude session attribution from the commit trailers
+description: Write a signed, chained receipt for the current commit — file hashes, diff hash, author, and provenance (AI-assisted or not, session, model, tool version)
 ---
 
 Create a receipt for HEAD:
@@ -9,7 +9,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/core/receipt.py" create
 ```
 
 - One receipt per commit: re-running on the same HEAD is a no-op, not a
-  duplicate.
+  duplicate. Normally you never need this — the hooks receipt commits
+  automatically; use it to receipt a commit both hooks missed.
 - "refusing to extend a broken chain" is fail-closed working as designed —
   something in `.titan/attestations/` was altered or lost. Run
   `/verify-chain` to locate it; NEVER "fix" a broken chain by deleting or
@@ -17,8 +18,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/core/receipt.py" create
   tampering receipts exist to expose. The honest path is: keep the broken
   chain as evidence, investigate what changed, and if the chain must
   restart, start a new tree and say so in the commit message.
-- Attribution is copied verbatim from the commit's Co-Authored-By and
-  Claude-Session trailers. It is an attestation by the commit author, not
-  a proof of authorship — never present it as more.
+- `provenance.ai_assisted` comes from the commit's Claude trailers and from
+  whether the Claude Code hook recorded it; model, Claude Code version and
+  transcript hash are what the hook observed locally. They are recorded
+  claims by the tool, not proof of authorship — never present them as more.
 
 If the repo isn't initialized, offer `/receipt-init` instead of improvising.

@@ -32,9 +32,17 @@ verification fails.
    under a key the team controls."
 2. **Not review, not quality.** A receipt attests WHAT changed, not that
    anyone approved it or that it was good.
-3. **Not truthful attribution.** The Claude-Session / Co-Authored-By fields
-   are copied from the commit message — an attestation by whoever wrote the
-   commit. Present them as recorded claims, never as verified facts.
+3. **Not truthful provenance.** `provenance.ai_assisted`, `basis`, `models`,
+   `claude_code_version`, `session_id` and the transcript hash are recorded
+   claims: trailers copied from the commit message, plus what the Claude Code
+   hook observed locally when it wrote the receipt. The chain proves they were
+   not edited afterwards — flipping `ai_assisted` breaks verification — not
+   that they were accurate when written. Present them as recorded claims,
+   never as verified facts.
+3b. **Not complete coverage.** Only receipted commits are counted. Commits made
+   before init, or in a clone without the git hook and outside Claude Code,
+   have no receipt. A report's AI-assisted percentage is "of receipted
+   commits"; say so when it is quoted.
 4. **Only as strong as the earliest independent copy.** A chain that only
    ever lived on one machine proves ordering to its owner alone. Committing
    `.titan/attestations/` and pushing gives every clone an independent
@@ -54,10 +62,13 @@ verification fails.
 
 ## For compliance write-ups
 
-Safe sentence template: "Every AI-assisted commit is recorded in a
-hash-chained, HMAC-signed receipt committed alongside the code; any
-post-hoc alteration of recorded history is detectable by offline
-verification." Do not add "non-repudiable," "cryptographically proves
+Safe sentence template: "Every commit made through our tooling is recorded
+in a hash-chained, HMAC-signed receipt committed alongside the code, carrying
+the commit's content hashes and a recorded provenance claim (AI-assisted or
+not, model and tool version where observed); any post-hoc alteration of
+recorded history is detectable by offline verification." `/receipt-report`
+produces the evidence document with its verification result and this
+limits footer attached — do not strip the footer. Do not add "non-repudiable," "cryptographically proves
 authorship," or named framework compliance (SOC2/EU AI Act) without the
 user's own auditor signing off — offer the mapping as input to that
 conversation, not as its conclusion.

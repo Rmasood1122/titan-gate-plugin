@@ -1,12 +1,15 @@
 {
   "name": "titan-receipts-marketplace",
-  "description": "Tamper-evident audit receipts for AI-assisted code changes.",
-  "owner": { "name": "Rehan Masood", "url": "https://github.com/Rmasood1122" },
+  "description": "An audit trail for AI-written code: tamper-evident, hash-chained receipts for every commit, with provenance and a one-command compliance report.",
+  "owner": {
+    "name": "Rehan Masood",
+    "url": "https://github.com/Rmasood1122"
+  },
   "plugins": [
     {
       "name": "titan-receipts",
       "source": "./",
-      "description": "Hash-chained, HMAC-signed receipts for every AI-assisted commit; offline verification; fail-closed chain rules."
+      "description": "Tamper-evident receipt for every commit — AI-assisted or not, model, tool version, session, file hashes — hash-chained, signed, verified offline. /receipt-report writes the compliance evidence."
     }
   ]
 }

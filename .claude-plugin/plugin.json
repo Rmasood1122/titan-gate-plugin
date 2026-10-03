@@ -1,8 +1,8 @@
 {
   "name": "titan-receipts",
   "displayName": "Titan Receipts",
-  "version": "1.0.0",
-  "description": "Tamper-evident receipts for AI-assisted commits — every change hash-chained and HMAC-signed, with Claude session attribution, verifiable offline. Fail-closed: forked or tampered chains refuse to extend.",
+  "version": "1.1.0",
+  "description": "An audit trail for AI-written code. Every commit gets a tamper-evident receipt — AI-assisted or not, model, Claude Code version, session, file and diff hashes — hash-chained, HMAC-signed, verifiable offline. One command produces the compliance report for SOC 2 / HIPAA / PCI change-control evidence.",
   "author": {
     "name": "Rehan Masood",
     "email": "rmasood524@gmail.com",
@@ -11,7 +11,20 @@
   "homepage": "https://github.com/Rmasood1122/titan-gate-plugin",
   "repository": "https://github.com/Rmasood1122/titan-gate-plugin",
   "license": "MIT",
-  "keywords": ["audit-trail", "ai-governance", "receipts", "tamper-evident", "provenance", "compliance", "git"],
+  "keywords": [
+    "audit-trail",
+    "ai-governance",
+    "receipts",
+    "tamper-evident",
+    "provenance",
+    "compliance",
+    "git",
+    "soc2",
+    "hipaa",
+    "ai-bill-of-materials",
+    "change-control",
+    "fail-closed"
+  ],
   "icon": "./.claude-plugin/icon.svg",
   "supportUrl": "https://github.com/Rmasood1122/titan-gate-plugin/issues",
   "documentationUrl": "https://github.com/Rmasood1122/titan-gate-plugin#readme",
