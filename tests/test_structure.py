@@ -35,7 +35,7 @@ def frontmatter(path: Path) -> dict:
 
 def test_commands_frontmatter_and_no_broad_grants():
     cmds = sorted((ROOT / "commands").glob("*.md"))
-    assert {c.stem for c in cmds} == {"receipt-init", "receipt", "verify-chain"}
+    assert {c.stem for c in cmds} == {"receipt-init", "receipt", "verify-chain", "receipt-report"}
     for c in cmds:
         data = frontmatter(c)
         assert data.get("description"), c
@@ -89,3 +89,20 @@ def test_readme_claims_match_behavior():
     assert "shared secret" in readme
     # stdlib claim is enforced by test_core_is_stdlib_only above
     assert "stdlib only" in readme.lower() or "Stdlib only" in readme
+
+
+def test_action_yml_is_composite_and_uses_vendored_or_plugin_tool():
+    import yaml
+    a = yaml.safe_load((ROOT / "action.yml").read_text())
+    assert a["runs"]["using"] == "composite"
+    step = a["runs"]["steps"][0]["run"]
+    assert "verify --structure-only" in step and 'python3 "$TOOL" verify' in step
+    assert "rm -f .titan/key" in step and "exit $rc" in step   # key never outlives the step; report written even on failure
+    assert "key" in a["inputs"] and a["inputs"]["key"]["required"] is False
+
+
+def test_readme_documents_provenance_and_coverage_limits():
+    readme = (ROOT / "README.md").read_text()
+    assert "ai_assisted" in readme
+    assert "install-hook" in readme            # hooks aren't cloned; README must say so
+    assert "recorded claim" in readme.lower() or "recorded claims" in readme.lower()
