@@ -17,5 +17,15 @@ Report the result exactly as it is:
 - **CHAIN FAIL / SIG FAIL** names the exact receipt. Do not delete or edit
   it to get to green; the failure IS the finding. Help the user diff the
   offending receipt against git history to see what changed and when.
+- **SIGNATURES NOT CHECKED (exit 2)** means this checkout has no
+  `.titan/key` — typically a fresh clone. The structural walk still ran and
+  its result is real; say so, then say signatures could not be verified and
+  the key must be obtained out-of-band. Never call this a PASS.
+- **ANCHOR** (always printed last) says how many receipts are committed and
+  pushed. Relay it every time, even on PASS: a chain that verifies but exists
+  only on this machine is not yet evidence to anyone else — the key-holder
+  could rewrite it. If anything is untracked/uncommitted/unpushed, give the
+  exact command: `git add .titan/attestations && git commit && git push`.
 
-This runs fully offline — no network, no service, just the files and the key.
+This runs fully offline — no network, no service, just the files, the key,
+and local git metadata.
