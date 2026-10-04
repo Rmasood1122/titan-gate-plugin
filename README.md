@@ -68,7 +68,7 @@ Commit both; the key never. Git hooks aren't cloned, so each teammate runs
 |---|---|
 | `/receipt-init` | Generates the signing key (gitignored — init refuses if git tracks it), vendors the verifier into `.titan/tools/`, installs a git `post-commit` hook. `--no-git-hook` to skip the hook. |
 | `/receipt` | Writes a signed, chained receipt for HEAD by hand. One per commit; re-runs are no-ops. |
-| `/verify-chain` | Walks the whole chain offline: structure + every signature. Any tamper = exit 1 naming the receipt. `--structure-only` checks chain and content hashes without the key and says signatures were not checked. |
+| `/verify-chain` | Walks the whole chain offline: structure + every signature. Any tamper = exit 1 naming the receipt. `--structure-only` checks chain and content hashes without the key and says signatures were not checked. Ends with an `ANCHOR` line: how many receipts are committed **and pushed**. |
 | `/receipt-report` | Markdown report: receipted commits, AI-assisted share, by recorder / author / month, models and Claude Code versions recorded, chain verification result, and the limits footer. |
 
 ## Two hooks, full coverage
@@ -119,8 +119,22 @@ ordered chain — under a key your team controls. Flip a single
 - **Anything about un-receipted commits.** Coverage is as good as hook
   installation.
 - **Ordering to anyone but you** until `.titan/attestations/` is committed
-  and pushed — every clone then holds an independent copy that tampering
-  would have to chase down.
+  and pushed. Because that distribution is the only defence against someone
+  who holds the key, `/verify-chain` measures it: its closing `ANCHOR` line
+  reports how many receipts are untracked, uncommitted, or
+  committed-but-not-pushed. A chain that verifies but sits only on one
+  machine is a claim, not evidence — every pushed clone then holds an
+  independent copy that tampering would have to chase down.
+
+### Verifying a clone that has no key
+
+The key is gitignored and never travels with the repo, so a reviewer's fresh
+clone has the receipts but not `.titan/key`. `/verify-chain` still runs the
+full structural walk there — one unbroken chain from GENESIS, every stored
+`receipt_hash` recomputed from content — and reports that result, then says
+plainly `SIGNATURES NOT CHECKED` and exits 2. Structure proves the files are
+internally consistent; only the key proves they were signed under it. Share
+the key out-of-band with whoever needs to verify signatures.
 
 The bundled `receipt-integrity` skill keeps compliance language inside these
 lines, because a receipt system that overclaims is worse than none.

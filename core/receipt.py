@@ -47,7 +47,13 @@ Subcommands:
                       walk .titan/attestations/: chain structure + every
                       signature; exit 0 only if ALL verify. --structure-only
                       checks chain + content hashes without the key (CI
-                      without the secret) and SAYS signatures were not checked
+                      without the secret) and SAYS signatures were not checked.
+                      Without a key (a fresh clone) it behaves the same way:
+                      structure is checked and reported, signatures declared
+                      UNCHECKED, exit 2. Always ends with an ANCHOR line: how
+                      many receipts are committed AND pushed — distribution is
+                      the only defence against a key-holder rewrite, so verify
+                      measures it.
   report [--out F]    markdown summary for a compliance evidence folder:
                       receipts, AI-assisted share, by recorder/author/month,
                       chain verification result, and the honest-limits footer
@@ -550,34 +556,45 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if not TREE.exists() or not any(TREE.rglob("*.json")):
         return die("no attestations at .titan/attestations/ — nothing to verify")
     structure_only = getattr(args, "structure_only", False)
-    key = None
-    if not structure_only:
-        if not KEY_PATH.exists():
-            return die("no .titan/key — signatures cannot be checked without it "
-                       "(use --structure-only to check chain + content hashes "
-                       "without the key, and say so)")
-        key = load_key()
-        if key is None:
-            return 2
 
+    # Structure first: it needs no key, so a clone that has the attestations
+    # but not the (correctly gitignored) key still gets a real answer.
     try:
         head = latest_receipt_hash(TREE)  # full structural walk, fail-closed
     except ChainStateError as exc:
         print(f"CHAIN FAIL: {exc}", file=sys.stderr)
         return 1
+    n = sum(1 for _ in TREE.rglob("*.json"))
 
     if structure_only:
-        n = sum(1 for _ in TREE.rglob("*.json"))
+        # Explicitly asked to skip signatures — an intended check, not a failure.
         print(f"chain OK (structure only): {n} receipt(s), head {head[:12]}…")
         print("NOT CHECKED: signatures — no key was used. This proves the "
               "receipts are internally consistent and unaltered relative to "
               "their own hashes, not that they were signed by the key holder.")
+        _report_anchor()
         return 0
 
-    n, bad = 0, 0
+    if not KEY_PATH.exists():
+        # F-T3: no key, and structure-only was not requested (e.g. a fresh
+        # clone) — say exactly what was and wasn't checked, then fail closed.
+        # Structure alone is useful information, not a PASS.
+        print(f"chain structure OK: {n} receipt(s), one unbroken line from "
+              f"GENESIS, every stored receipt_hash matches its content, head {head[:12]}…")
+        print("SIGNATURES NOT CHECKED: no .titan/key in this checkout (it is "
+              "gitignored by design). Structure alone proves the files are "
+              "internally consistent, not that they were signed under the "
+              "team's key. Obtain the key out-of-band to verify signatures.",
+              file=sys.stderr)
+        _report_anchor()
+        return 2
+    key = load_key()
+    if key is None:
+        return 2
+
+    bad = 0
     for p in sorted(TREE.rglob("*.json")):
         r = json.loads(p.read_text())
-        n += 1
         want = hmac.new(key, r["receipt_hash"].encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(want, r.get("signature", "")):
             print(f"SIG FAIL: {p}", file=sys.stderr)
@@ -588,6 +605,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     print(f"chain OK: {n} receipt(s), head {head[:12]}…")
     print("PASS means: contents unchanged since signing, under this shared "
           "key. It does not identify the signer.")
+    _report_anchor()
     return 0
 
 
@@ -733,6 +751,72 @@ def cmd_report(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(text)
     return 0
+
+
+# ---------------------------------------------------------------- anchor
+def anchor_status() -> dict:
+    """How much of .titan/attestations/ exists outside this working tree.
+
+    HMAC is a shared secret, so the key-holder can rewrite and re-sign the
+    whole chain locally and `verify` cannot tell. The defence the README
+    promises is DISTRIBUTION: once receipts are committed and pushed, every
+    clone holds an independent copy a rewrite would have to chase down.
+    This measures whether that defence is actually in place.
+
+    Returns counts: total, untracked, modified (tracked but dirty), unpushed
+    (committed locally, not on the upstream), plus `upstream` (name or None).
+    Never raises — a repo with no remote just reports unpushed=unknown.
+    """
+    files = sorted(str(p) for p in TREE.rglob("*.json"))
+    out = {"total": len(files), "untracked": 0, "modified": 0,
+           "unpushed": None, "upstream": None}
+    if not files:
+        return out
+    st = subprocess.run(["git", "status", "--porcelain", "--", str(TREE)],
+                        capture_output=True, text=True)
+    for line in st.stdout.splitlines():
+        code = line[:2]
+        if code == "??":
+            out["untracked"] += 1
+        elif code.strip():
+            out["modified"] += 1
+    up = subprocess.run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                        capture_output=True, text=True)
+    if up.returncode != 0:
+        return out  # no upstream configured: cannot know what is pushed
+    out["upstream"] = up.stdout.strip()
+    # receipt files touched by commits that are ahead of upstream
+    ahead = subprocess.run(["git", "diff", "--name-only", f"{out['upstream']}...HEAD",
+                            "--", str(TREE)], capture_output=True, text=True)
+    out["unpushed"] = len([l for l in ahead.stdout.splitlines() if l.strip()])
+    return out
+
+
+def _report_anchor() -> None:
+    a = anchor_status()
+    if a["total"] == 0:
+        return
+    loose = a["untracked"] + a["modified"] + (a["unpushed"] or 0)
+    if a["upstream"] is None:
+        print(f"ANCHOR: no upstream remote — {a['total']} receipt(s) exist only in "
+              f"this working tree. Against the key-holder, a local-only chain is a "
+              f"claim, not evidence: commit and push .titan/attestations/.",
+              file=sys.stderr)
+    elif loose == 0:
+        print(f"ANCHOR: all {a['total']} receipt(s) committed and pushed to "
+              f"{a['upstream']} — every clone holds an independent copy.")
+    else:
+        parts = []
+        if a["untracked"]:
+            parts.append(f"{a['untracked']} untracked")
+        if a["modified"]:
+            parts.append(f"{a['modified']} modified-uncommitted")
+        if a["unpushed"]:
+            parts.append(f"{a['unpushed']} committed-not-pushed")
+        print(f"ANCHOR: {', '.join(parts)} of {a['total']} receipt(s) are not on "
+              f"{a['upstream']}. Until pushed they are only as trustworthy as this "
+              f"machine: `git add .titan/attestations && git commit && git push`.",
+              file=sys.stderr)
 
 
 def main() -> int:
