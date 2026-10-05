@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _shell import shell_argv
+
 PLUGIN = Path(__file__).resolve().parents[1]
 RECEIPT = PLUGIN / "core" / "receipt.py"
 
@@ -32,7 +34,7 @@ def run(args, cwd, env=None):
 
 
 def sh(cmd, cwd, env=None):
-    r = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True, text=True,
+    r = subprocess.run(shell_argv(cmd), cwd=cwd, capture_output=True, text=True,
                        env=env or clean_env())
     assert r.returncode == 0, r.stderr
     return r.stdout
@@ -112,7 +114,7 @@ def test_committing_receipts_does_not_regress(tmp_path):
     for i in range(3):
         sh("git add .titan/attestations", repo)
         # commit may be a no-op once everything is staged+committed; tolerate it
-        subprocess.run("git commit -qm receipts", cwd=repo, shell=True,
+        subprocess.run(shell_argv("git commit -qm receipts"), cwd=repo,
                        capture_output=True, text=True, env=clean_env())
         assert n_receipts() == before, (
             f"receipts grew from {before} to {n_receipts()} on iteration {i} "

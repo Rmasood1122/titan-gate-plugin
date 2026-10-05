@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from _shell import shell_argv
+
 PLUGIN = Path(__file__).resolve().parents[1]
 RECEIPT = PLUGIN / "core" / "receipt.py"
 
@@ -28,7 +30,7 @@ def run(args, cwd, env=None, stdin=None):
 
 
 def sh(cmd, cwd, env=None):
-    r = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True, text=True,
+    r = subprocess.run(shell_argv(cmd), cwd=cwd, capture_output=True, text=True,
                        env=env or clean_env())
     assert r.returncode == 0, r.stderr
     return r.stdout
