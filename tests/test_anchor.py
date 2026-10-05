@@ -3,6 +3,7 @@
 Runs under pytest (fixtures via tmp_path) and standalone (python tests/test_anchor.py).
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,13 +13,27 @@ PLUGIN = Path(__file__).resolve().parents[1]
 RECEIPT = PLUGIN / "core" / "receipt.py"
 
 
-def run(args, cwd):
+def clean_env(**extra):
+    """An environment that is NOT inside Claude Code — the real-world state a
+    human terminal and CI run in, where the git post-commit hook actually
+    fires. The test runner itself may set CLAUDECODE; scrubbing it here is what
+    keeps these tests from passing locally (hook deferred) but failing on CI
+    (hook active). See test_provenance.clean_env — same discipline."""
+    env = {k: v for k, v in os.environ.items()
+           if k != "CLAUDECODE" and not k.startswith("CLAUDE_")}
+    env.update(extra)
+    return env
+
+
+def run(args, cwd, env=None):
     return subprocess.run([sys.executable, str(RECEIPT), *args],
-                          cwd=cwd, capture_output=True, text=True)
+                          cwd=cwd, capture_output=True, text=True,
+                          env=env or clean_env())
 
 
-def sh(cmd, cwd):
-    r = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True, text=True)
+def sh(cmd, cwd, env=None):
+    r = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True, text=True,
+                       env=env or clean_env())
     assert r.returncode == 0, r.stderr
     return r.stdout
 
@@ -74,6 +89,39 @@ def test_fully_pushed_is_the_only_clean_anchor(tmp_path):
     assert v.returncode == 0, v.stderr
     assert "ANCHOR: all 1 receipt(s) committed and pushed" in v.stdout
     assert "ANCHOR" not in v.stderr
+
+
+def test_committing_receipts_does_not_regress(tmp_path):
+    """A commit whose only changed paths are under .titan/ must NOT be
+    receipted by the auto hook. Otherwise committing the receipts fires the
+    hook, which writes a new receipt, which dirties the tree again — an
+    unbounded regress that makes a clean anchor unreachable. This must hold
+    with CLAUDECODE unset (the environment the git hook is built for); the
+    first time it broke, the suite stayed green locally and went red on CI."""
+    repo = make_repo(tmp_path)
+    make_remote(tmp_path, repo)
+    hook = repo / ".git/hooks/post-commit"
+    assert hook.exists(), "init should install the post-commit hook"
+
+    def n_receipts():
+        return len(list((repo / ".titan/attestations").rglob("*.json")))
+
+    before = n_receipts()
+    # Commit the receipts repeatedly, exactly as a user chasing a clean anchor
+    # would. Each commit touches only .titan/attestations → no new receipt.
+    for i in range(3):
+        sh("git add .titan/attestations", repo)
+        # commit may be a no-op once everything is staged+committed; tolerate it
+        subprocess.run("git commit -qm receipts", cwd=repo, shell=True,
+                       capture_output=True, text=True, env=clean_env())
+        assert n_receipts() == before, (
+            f"receipts grew from {before} to {n_receipts()} on iteration {i} "
+            f"— the .titan-only commit was receipted (regress)")
+
+    # A real code change still IS receipted by the same hook.
+    (repo / "b.py").write_text("print('real change')\n")
+    sh("git add b.py && git commit -qm 'real change'", repo)
+    assert n_receipts() == before + 1, "a real code commit must still be receipted"
 
 
 # ---- F-T3: verify in a clone that has attestations but no key -------------

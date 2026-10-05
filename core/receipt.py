@@ -174,6 +174,16 @@ def changed_files(sha: str) -> tuple[list[dict], str, int]:
     return files, patch, len(parents)
 
 
+def _is_titan_path(path: str) -> bool:
+    """True if a changed path is inside the .titan/ tree — the attestation
+    machinery itself (receipt chain, vendored tools, key). Used to identify
+    receipts-only bookkeeping commits that must not be receipted, which would
+    otherwise regress forever. A .gitignore-only or any other change is the
+    user's and is still receipted."""
+    p = path.replace("\\", "/")
+    return p == ".titan" or p.startswith(".titan/")
+
+
 # ---------------------------------------------------------------- init
 def cmd_init(args: argparse.Namespace) -> int:
     root = repo_root()
@@ -442,6 +452,17 @@ def cmd_create(args: argparse.Namespace) -> int:
         files, patch, n_parents = changed_files(sha)
     except RuntimeError as exc:
         return 0 if args.auto else die(str(exc))
+
+    # Receipts-only commits: a commit whose every changed path is under
+    # .titan/ (the attestation chain and vendored tools) is bookkeeping, not
+    # a code change to attest. Receipting it in
+    # hook mode causes an unbounded regress — committing the receipts fires the
+    # hook, which writes a new receipt, which dirties the tree again, so the
+    # "all receipts committed and pushed" clean anchor can never be reached.
+    # The auto hook therefore skips such commits; a manual `/receipt` still
+    # records one if the user explicitly asks.
+    if args.auto and files and all(_is_titan_path(f["path"]) for f in files):
+        return 0
 
     # skip duplicates (hook may fire twice; amend re-fires): one receipt per sha
     if TREE.exists():
