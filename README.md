@@ -95,6 +95,15 @@ Without the key the action verifies chain structure and content hashes and
 states plainly that signatures were not checked. The key is written only for
 the step and removed after.
 
+The action verifies with **its own pinned verifier** (the one at the ref you
+pin `uses:` to), never the `.titan/tools/receipt.py` committed in the repo
+under audit. That is the point: the party who could alter the receipts also
+controls the vendored verifier, so letting it verify itself proves nothing.
+Pin a ref you trust. The escape hatch `allow_repo_verifier: true` runs the
+repo's own verifier for the rare canonicalization-compatibility case — it
+emits a warning that the check is no longer independent, and you should treat
+the result as self-reported.
+
 ## What a receipt proves — exactly, no more
 
 **Proves:** the recorded content (file hashes, diff hash, author, provenance

@@ -91,7 +91,7 @@ def test_readme_claims_match_behavior():
     assert "stdlib only" in readme.lower() or "Stdlib only" in readme
 
 
-def test_action_yml_is_composite_and_uses_vendored_or_plugin_tool():
+def test_action_yml_is_composite_and_uses_pinned_verifier_by_default():
     import yaml
     a = yaml.safe_load((ROOT / "action.yml").read_text())
     assert a["runs"]["using"] == "composite"
@@ -99,6 +99,19 @@ def test_action_yml_is_composite_and_uses_vendored_or_plugin_tool():
     assert "verify --structure-only" in step and 'python3 "$TOOL" verify' in step
     assert "rm -f .titan/key" in step and "exit $rc" in step   # key never outlives the step; report written even on failure
     assert "key" in a["inputs"] and a["inputs"]["key"]["required"] is False
+
+    # Trust model: the action's OWN pinned verifier is the default; the audited
+    # repo's vendored verifier is used only behind an explicit opt-in, never
+    # silently. This is the whole point of a tamper-evidence CI gate — the
+    # thing being audited must not supply the auditor.
+    assert 'TOOL="${GITHUB_ACTION_PATH}/core/receipt.py"' in step
+    assert "allow_repo_verifier" in a["inputs"]
+    assert a["inputs"]["allow_repo_verifier"]["default"] == "false"
+    # the repo's verifier is reachable ONLY when the opt-in is true
+    assert '"${TITAN_ALLOW_REPO_VERIFIER}" = "true"' in step
+    assert '.titan/tools/receipt.py' in step
+    # and using it must emit a warning that the check is not independent
+    assert "::warning" in step
 
 
 def test_readme_documents_provenance_and_coverage_limits():
