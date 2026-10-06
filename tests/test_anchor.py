@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _shell import shell_argv
+from _shell import posix, shell_argv
 
 PLUGIN = Path(__file__).resolve().parents[1]
 RECEIPT = PLUGIN / "core" / "receipt.py"
@@ -52,7 +52,7 @@ def make_repo(tmp: Path) -> Path:
 
 
 def make_remote(tmp: Path, repo: Path) -> None:
-    bare = tmp / "origin.git"
+    bare = posix(tmp / "origin.git")
     sh(f"git init -q --bare -b main {bare}", tmp)
     sh(f"git remote add origin {bare} && git push -q -u origin main", repo)
 
@@ -132,7 +132,7 @@ def test_keyless_verify_checks_structure_and_says_so(tmp_path):
     make_remote(tmp_path, repo)
     sh("git add .titan/attestations && git commit -qm receipts && git push -q", repo)
     clone = tmp_path / "clone"
-    sh(f"git clone -q {tmp_path / 'origin.git'} {clone}", tmp_path)
+    sh(f"git clone -q {posix(tmp_path / 'origin.git')} {posix(clone)}", tmp_path)
     assert not (clone / ".titan/key").exists()            # key never travels
     v = run(["verify"], clone)
     assert v.returncode == 2                               # NOT a pass

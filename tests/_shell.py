@@ -9,6 +9,7 @@ the maintainer could not run the suite on a Windows machine. Resolve a real
 POSIX shell (Git for Windows ships one) and exec the command through it.
 """
 import os
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -46,3 +47,11 @@ def shell_argv(cmd: str) -> list[str]:
     if POSIX_SHELL is None:
         pytest.skip("these tests need a POSIX shell (on Windows: install Git for Windows)")
     return [POSIX_SHELL, "-c", cmd]
+
+
+def posix(p: Path) -> str:
+    """A path safe to interpolate into a shell command string. A Windows path
+    (C:\\Users\\...) loses its backslashes inside `bash -c` — they are escape
+    characters there — so use forward slashes, which Git for Windows accepts,
+    and quote in case the path contains spaces."""
+    return shlex.quote(p.as_posix())
