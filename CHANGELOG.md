@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.1.1 — 2026-10-05
+
+Windows correctness. Found by making the test suite run on Windows for the
+first time.
+
+- **Fixed: receipts were platform-dependent on Windows.** `receipt.py` decoded
+  git's output with the platform locale (cp1252 on Windows) instead of UTF-8.
+  A non-ASCII filename (`café.py`) was recorded as `cafÃ©.py`, matched no
+  file, and its content hash was silently dropped while `create` still
+  exited 0 — the exact failure the `-z` parser exists to prevent, re-opened
+  by decoding. `diff_sha256` for the same commit also differed between a
+  receipt written on Windows and one written on Linux whenever the diff held
+  a non-ASCII byte. All git calls now decode as UTF-8 explicitly. A new test
+  compares the receipt's hashes against git's raw bytes with no text decoding
+  at all, so this holds on every platform. Receipts already written on
+  Windows for commits with non-ASCII paths or diffs attest the mangled
+  values; they still verify (they are internally consistent) but do not match
+  what Linux computes for that commit.
+- **Tests run on Windows.** The suite's shell helpers used `shell=True`,
+  which is cmd.exe on Windows — single quotes, `&&` chains and `VAR=x cmd`
+  prefixes all broke, so 25 of 60 tests died at fixture setup and the suite
+  could only be trusted on Linux. Helpers now run through a resolved POSIX
+  shell (Git for Windows' bash; never System32's WSL launcher), paths fed to
+  the shell use forward slashes, and the one NTFS-illegal filename case is
+  skipped on Windows. CI now runs `windows-latest` alongside `ubuntu-latest`.
+
 ## 1.1.0 — 2026-10-03
 
 Positioning: an audit trail for AI-written code, with the provenance auditors

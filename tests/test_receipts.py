@@ -1,6 +1,7 @@
 """End-to-end: init -> create -> chain -> verify, plus every tamper path,
 in a real throwaway git repo. A receipt system whose tamper cases were
 never seen failing is decoration."""
+import hashlib
 import json
 import subprocess
 import sys
@@ -155,17 +156,42 @@ def test_unicode_and_special_filenames_are_hashed(repo):
     the raw path WITH its content hash — silently dropping a hash is the
     exact failure an attestation tool exists to prevent."""
     run(["init"], repo)
-    for name in ("café résumé.py", "with space.txt", 'q"uote.md'):
+    names = ["café résumé.py", "with space.txt"]
+    if sys.platform != "win32":
+        names.append('q"uote.md')  # NTFS forbids '"' in filenames; the C-quoting
+                                   # path is still exercised by the non-ASCII name
+    for name in names:
         (repo / name).write_text("x\n")
     sh("git add -A && git commit -qm unicode", repo)
     assert run(["create"], repo).returncode == 0
     r = json.loads(receipts(repo)[-1].read_text())
     by_path = {f["path"]: f for f in r["files"]}
-    for name in ("café résumé.py", "with space.txt", 'q"uote.md'):
+    for name in names:
         assert name in by_path, (name, list(by_path))
         assert "sha256" in by_path[name], name
     assert not any(p.startswith('"') for p in by_path)  # no C-quoted paths
     assert run(["verify"], repo).returncode == 0
+
+
+def test_hashes_are_over_gits_raw_utf8_bytes_on_every_platform(repo):
+    """A receipt must attest the same thing whichever OS wrote it. Decoding
+    git's output with the platform locale (cp1252 on Windows) re-encoded
+    non-ASCII bytes before hashing, so diff_sha256 for one commit differed
+    between Windows and Linux, and a non-ASCII filename matched no file and
+    lost its content hash. Compare against git's RAW bytes, no text mode."""
+    run(["init"], repo)
+    (repo / "notes — café.md").write_text("em dash — and café ✓\n", encoding="utf-8")
+    sh("git add -A && git commit -qm 'non-ascii content and name'", repo)
+    assert run(["create"], repo).returncode == 0
+    r = json.loads(receipts(repo)[-1].read_text(encoding="utf-8"))
+    sha = sh("git rev-parse HEAD", repo).strip()
+    raw_diff = subprocess.run(["git", "show", "--format=", sha], cwd=repo,
+                              capture_output=True).stdout          # bytes
+    assert r["diff_sha256"] == hashlib.sha256(raw_diff).hexdigest()
+    by_path = {f["path"]: f for f in r["files"]}
+    assert "notes — café.md" in by_path, list(by_path)
+    assert by_path["notes — café.md"]["sha256"] == hashlib.sha256(
+        (repo / "notes — café.md").read_bytes()).hexdigest()
 
 
 def test_merge_commit_attests_first_parent_diff(repo):
