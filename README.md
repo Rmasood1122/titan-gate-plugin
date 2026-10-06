@@ -22,7 +22,7 @@ teams have a process document. This gives you receipts.
   "provenance": {
     "ai_assisted": true,
     "basis": ["commit-trailers", "claude-code-hook"],
-    "recorder": "claude-code-hook", "recorder_version": "1.1.0",
+    "recorder": "claude-code-hook", "recorder_version": "1.1.1",
     "session_id": "7f3a…", "models": ["claude-sonnet-4-6"], "claude_code_version": "2.1.288",
     "transcript": { "lines": 412, "content_sha256": "2ef9732e…" }
   },
@@ -85,7 +85,7 @@ have no receipt — the report says so rather than counting them as human.
 ## Verify in CI
 
 ```yaml
-- uses: Rmasood1122/titan-gate-plugin@v1.1.0
+- uses: Rmasood1122/titan-gate-plugin@v1.1.1
   with:
     key: ${{ secrets.TITAN_KEY }}       # omit for structure-only verification
     report: docs/ai-change-receipts.md  # optional
