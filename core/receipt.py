@@ -83,7 +83,7 @@ from chain_state import (                       # noqa: E402
 
 SCHEMA = "change-attestation/v1"
 SIGNING = "hmac-sha256-v1"
-PLUGIN_VERSION = "1.1.0"          # kept equal to .claude-plugin/plugin.json (tested)
+PLUGIN_VERSION = "1.1.1"          # kept equal to .claude-plugin/plugin.json (tested)
 KEY_PATH = Path(".titan/key")
 TREE = Path(".titan/attestations")
 TOOLS_DIR = Path(".titan/tools")
@@ -97,7 +97,12 @@ def die(msg: str, code: int = 2) -> "int":
 
 
 def git(*args: str) -> str:
-    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    # encoding is explicit: git emits paths and diffs as UTF-8 bytes, and
+    # text=True alone decodes with the platform locale — cp1252 on Windows —
+    # which mangled 'café.py' into 'cafÃ©.py' (no such file → content hash
+    # silently dropped) and made diff_sha256 differ between a receipt written
+    # on Windows and one written on Linux for the same commit.
+    r = subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8")
     if r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()}")
     return r.stdout
@@ -794,7 +799,7 @@ def anchor_status() -> dict:
     if not files:
         return out
     st = subprocess.run(["git", "status", "--porcelain", "--", str(TREE)],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, encoding="utf-8")
     for line in st.stdout.splitlines():
         code = line[:2]
         if code == "??":
@@ -802,13 +807,13 @@ def anchor_status() -> dict:
         elif code.strip():
             out["modified"] += 1
     up = subprocess.run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, encoding="utf-8")
     if up.returncode != 0:
         return out  # no upstream configured: cannot know what is pushed
     out["upstream"] = up.stdout.strip()
     # receipt files touched by commits that are ahead of upstream
     ahead = subprocess.run(["git", "diff", "--name-only", f"{out['upstream']}...HEAD",
-                            "--", str(TREE)], capture_output=True, text=True)
+                            "--", str(TREE)], capture_output=True, text=True, encoding="utf-8")
     out["unpushed"] = len([l for l in ahead.stdout.splitlines() if l.strip()])
     return out
 
